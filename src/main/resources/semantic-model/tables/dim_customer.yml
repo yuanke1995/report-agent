@@ -1,0 +1,69 @@
+table: dim_customer
+displayName: 客户表
+description: 客户维度，含等级、注册渠道与注册归属地区。
+grain: 一行 = 一个客户
+synonyms: [ 客户, 用户, 会员, 买家 ]
+rowCountHint: 5000
+
+columns:
+
+  - name: customer_id
+    type: INT
+    displayName: 客户ID
+    role: id
+    description: 主键
+
+  - name: customer_code
+    type: VARCHAR(32)
+    displayName: 客户编码
+    role: dimension
+    description: 业务编码，格式 C+6位序号
+
+  - name: customer_name
+    type: VARCHAR(60)
+    displayName: 客户名称
+    role: dimension
+    description: 客户名
+
+  - name: customer_level
+    type: VARCHAR(16)
+    displayName: 客户等级
+    role: dimension
+    description: 会员等级
+    enums:
+      normal: 普通
+      silver: 银卡
+      gold: 金卡
+      platinum: 铂金
+    synonyms: [ 等级, 会员等级, 客户级别, 会员级别 ]
+    notes: >
+      口径要点：数据库存的是英文枚举值，用户提问用中文（「金卡客户」「铂金会员」），
+      过滤时必须映射成英文值。用户说「高等级客户」「VIP」通常指 gold + platinum。
+
+  - name: register_date
+    type: DATE
+    displayName: 注册日期
+    role: time
+    description: 客户注册日期。分析新客/老客时用这一列，不要和订单日期混淆。
+
+  - name: region_id
+    type: INT
+    displayName: 注册地区ID
+    role: id
+    description: >
+      客户注册归属地区，关联 dim_region。
+      注意与订单表的 region_id（收货地区）是两个不同概念：
+      问「华东区的销售额」通常指订单收货地区，走 fact_order.region_id；
+      问「华东区有多少客户」才走 dim_customer.region_id。
+
+  - name: channel
+    type: VARCHAR(16)
+    displayName: 注册渠道
+    role: dimension
+    description: 客户注册来源
+    enums:
+      app: App
+      web: 网页
+      mini_program: 小程序
+      offline: 线下门店
+    notes: 与订单表的 channel（下单渠道）不同，同一客户可能从不同渠道下单。

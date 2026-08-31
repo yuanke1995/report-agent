@@ -1,0 +1,40 @@
+id: sales_by_region
+name: 区域销售对比
+description: 按大区统计销售额、订单量、客单价并排名，用于比较各区域业绩。统计口径为订单收货地区。
+triggers:
+  - 各个大区的销售额对比
+  - 哪个区域卖得最好
+  - 按地区看销售情况
+  - 华东和华南哪个销售额高
+  - 区域销售排名
+
+params:
+  - name: startDate
+    type: date
+    displayName: 开始日期
+    required: true
+    description: yyyy-MM-dd 格式，含当天
+  - name: endDate
+    type: date
+    displayName: 结束日期
+    required: true
+    description: yyyy-MM-dd 格式，含当天
+
+sql: |
+  SELECT r.region_name                                                   AS 大区,
+         ROUND(SUM(o.pay_amount), 2)                                     AS 销售额,
+         COUNT(DISTINCT o.order_id)                                      AS 订单量,
+         ROUND(SUM(o.pay_amount) / NULLIF(COUNT(DISTINCT o.order_id), 0), 2) AS 客单价,
+         COUNT(DISTINCT o.customer_id)                                   AS 下单客户数
+  FROM fact_order o
+           INNER JOIN dim_region r ON r.region_id = o.region_id
+  WHERE o.order_status IN ('paid', 'shipped', 'completed')
+    AND o.order_date >= :startDate
+    AND o.order_date <= :endDate
+  GROUP BY r.region_name
+  ORDER BY 销售额 DESC
+
+chart:
+  type: bar
+  xField: 大区
+  yFields: [ 销售额 ]

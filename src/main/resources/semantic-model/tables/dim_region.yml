@@ -1,0 +1,48 @@
+table: dim_region
+displayName: 地区表
+description: 地区维度，大区-省-市三级都在同一张表里。
+grain: 一行 = 一个城市
+synonyms: [ 地区, 区域, 地域 ]
+rowCountHint: 28
+
+columns:
+
+  - name: region_id
+    type: INT
+    displayName: 地区ID
+    role: id
+    description: 主键
+
+  - name: region_name
+    type: VARCHAR(20)
+    displayName: 大区
+    role: dimension
+    description: 七大区划分
+    enums:
+      华东: 华东
+      华北: 华北
+      华南: 华南
+      华中: 华中
+      西南: 西南
+      西北: 西北
+      东北: 东北
+    synonyms: [ 大区, 区域, 片区 ]
+    notes: >
+      口径要点：用户说「华东区」「华南地区」指的是这一列；说「江苏」「广东」指的是 province；
+      说「上海」「深圳」指的是 city。三者是同一张表的不同层级列，不要混用。
+      注意「上海市」「北京市」「天津市」「重庆市」在 province 和 city 两列都出现，
+      province 存「上海市」而 city 存「上海」（带不带「市」字不同），按市筛选时用 city。
+
+  - name: province
+    type: VARCHAR(30)
+    displayName: 省份
+    role: dimension
+    description: 省/直辖市/自治区。直辖市带「市」字（如「上海市」），自治区简写（如「新疆」）。
+    synonyms: [ 省, 省份 ]
+
+  - name: city
+    type: VARCHAR(30)
+    displayName: 城市
+    role: dimension
+    description: 城市名，不带「市」后缀（如「上海」「南京」）
+    synonyms: [ 市, 城市 ]

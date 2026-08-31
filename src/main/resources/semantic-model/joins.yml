@@ -1,0 +1,82 @@
+# ============================================================
+# 批准的 join 路径
+#
+# 只有在这里登记过的连接，SqlGuard 才允许出现在生成的 SQL 里。
+# 这条约束解决的是 NL2SQL 最典型的错误：模型自己"编"一个看起来
+# 合理但业务上错误的连接（比如把订单表和商品表直接连起来，
+# 跳过明细表导致金额翻倍）。
+#
+# id 命名规范：{左表}__{右表}，多路径时加后缀区分。
+# ============================================================
+
+joins:
+
+  - id: fact_order__dim_customer
+    left: fact_order
+    right: dim_customer
+    type: INNER
+    on: "fact_order.customer_id = dim_customer.customer_id"
+    cardinality: "n:1"
+    description: 订单归属的客户
+
+  - id: fact_order__dim_region
+    left: fact_order
+    right: dim_region
+    type: INNER
+    on: "fact_order.region_id = dim_region.region_id"
+    cardinality: "n:1"
+    description: 订单的收货地区。注意这是收货地区，不是客户注册地区。
+
+  - id: fact_order__dim_date
+    left: fact_order
+    right: dim_date
+    type: INNER
+    on: "fact_order.order_date = dim_date.date_key"
+    cardinality: "n:1"
+    description: 订单下单日期对应的日期维度，用于按季度/周末等日历属性分组
+
+  - id: fact_order_item__fact_order
+    left: fact_order_item
+    right: fact_order
+    type: INNER
+    on: "fact_order_item.order_id = fact_order.order_id"
+    cardinality: "n:1"
+    description: 明细归属的订单。任何需要按订单状态过滤的明细分析都必须走这条路径。
+
+  - id: fact_order_item__dim_product
+    left: fact_order_item
+    right: dim_product
+    type: INNER
+    on: "fact_order_item.product_id = dim_product.product_id"
+    cardinality: "n:1"
+    description: 明细对应的商品
+
+  - id: fact_order_item__dim_date
+    left: fact_order_item
+    right: dim_date
+    type: INNER
+    on: "fact_order_item.order_date = dim_date.date_key"
+    cardinality: "n:1"
+    description: 明细下单日期对应的日期维度
+
+  - id: dim_customer__dim_region
+    left: dim_customer
+    right: dim_region
+    type: INNER
+    on: "dim_customer.region_id = dim_region.region_id"
+    cardinality: "n:1"
+    description: 客户的注册归属地区。与订单收货地区是两个不同概念，不要混用。
+
+# ------------------------------------------------------------
+# 明确禁止的连接：这些是模型最容易犯的错
+# ------------------------------------------------------------
+forbiddenJoins:
+
+  - left: fact_order
+    right: dim_product
+    reason: "订单表与商品表之间没有直接关系，必须经由 fact_order_item 中转。直连会导致笛卡尔积。"
+
+  - left: fact_order
+    right: fact_order_item
+    viaOnly: fact_order_item__fact_order
+    reason: "方向必须是明细连订单（n:1）。若用订单表左连明细，按订单聚合金额时会因明细行数放大而重复计算。"

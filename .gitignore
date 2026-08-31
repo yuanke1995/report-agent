@@ -1,0 +1,25 @@
+HELP.md
+target/
+!.mvn/wrapper/maven-wrapper.jar
+!**/src/main/**/target/
+!**/src/test/**/target/
+
+### 本地配置：含密钥，绝不入库 ###
+src/main/resources/application-local.yml
+
+### IDE ###
+.idea
+*.iws
+*.iml
+*.ipr
+.vscode/
+.DS_Store
+
+### 前端 ###
+web/node_modules/
+web/dist/
+
+### 运行时 ###
+logs/
+*.log
+data/

@@ -1,0 +1,60 @@
+table: dim_date
+displayName: 日期表
+description: 日期维度，覆盖 2025-01-01 ~ 2026-12-31。需要按季度、周末等日历属性分组时才用。
+grain: 一行 = 一天
+synonyms: [ 日期, 日历 ]
+rowCountHint: 730
+
+columns:
+
+  - name: date_key
+    type: DATE
+    displayName: 日期
+    role: time
+    isPrimaryTimeColumn: true
+    description: 主键，日期本身
+
+  - name: year_num
+    type: SMALLINT
+    displayName: 年
+    role: dimension
+    description: 年份，如 2026
+
+  - name: quarter_num
+    type: TINYINT
+    displayName: 季度
+    role: dimension
+    description: 季度 1-4
+    synonyms: [ 季 ]
+
+  - name: month_num
+    type: TINYINT
+    displayName: 月
+    role: dimension
+    description: 月份 1-12（不含年份，跨年统计时不要单独用这一列分组）
+
+  - name: year_month_str
+    type: CHAR(7)
+    displayName: 年月
+    role: dimension
+    description: yyyy-MM 格式，按月分组的首选列
+    synonyms: [ 月份 ]
+
+  - name: day_of_week
+    type: TINYINT
+    displayName: 星期
+    role: dimension
+    description: 1=周一 … 7=周日
+
+  - name: is_weekend
+    type: TINYINT(1)
+    displayName: 是否周末
+    role: dimension
+    description: 1=周末（周六周日），0=工作日
+    enums:
+      "1": 周末
+      "0": 工作日
+
+notes: >
+  多数按月/按日的统计不需要 join 这张表，直接用 DATE_FORMAT(fact_order.order_date, '%Y-%m')
+  即可，性能更好。只有需要季度、周末标记这类日历属性时才 join。

@@ -1,0 +1,74 @@
+table: fact_order_item
+displayName: 订单明细表
+description: 订单商品明细，一行一个商品。需要按商品/类目/品牌维度分析时必须用这张表。
+grain: 一行 = 一笔订单中的一个商品
+synonyms: [ 订单明细, 明细表, 商品明细, 销售明细 ]
+rowCountHint: 75126
+
+columns:
+
+  - name: item_id
+    type: BIGINT
+    displayName: 明细ID
+    role: id
+    description: 明细主键
+
+  - name: order_id
+    type: BIGINT
+    displayName: 订单ID
+    role: id
+    description: 所属订单，关联 fact_order
+
+  - name: product_id
+    type: INT
+    displayName: 商品ID
+    role: id
+    description: 关联 dim_product
+
+  - name: order_date
+    type: DATE
+    displayName: 下单日期
+    role: time
+    isPrimaryTimeColumn: true
+    description: 冗余自订单表，纯商品维度分析可直接用这一列过滤时间，无需 join 订单表。
+    notes: >
+      但只要涉及订单状态过滤（几乎所有销售指标都需要），仍必须 join fact_order。
+      不要因为这里有日期列就省掉 join，那会把待支付和已取消的订单也算进去。
+
+  - name: quantity
+    type: INT
+    displayName: 数量
+    role: measure
+    unit: 件
+    description: 该商品的购买件数
+
+  - name: unit_price
+    type: DECIMAL(12,2)
+    displayName: 成交单价
+    role: measure
+    unit: 元
+    description: 实际成交单价，通常低于商品标价 list_price
+
+  - name: item_amount
+    type: DECIMAL(14,2)
+    displayName: 明细金额
+    role: measure
+    unit: 元
+    description: 数量 × 成交单价，未扣明细优惠
+
+  - name: item_discount
+    type: DECIMAL(14,2)
+    displayName: 明细优惠
+    role: measure
+    unit: 元
+    description: 该明细的优惠金额
+
+  - name: item_pay_amount
+    type: DECIMAL(14,2)
+    displayName: 明细实付
+    role: measure
+    unit: 元
+    description: 明细金额 - 明细优惠。商品维度的销售额用这一列。
+    notes: >
+      明细实付之和 + 运费 = 订单实付。按商品维度统计销售额时用这一列，
+      不要用订单表的 pay_amount（那含运费，且无法拆到商品）。

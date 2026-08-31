@@ -1,0 +1,170 @@
+# ============================================================
+# 指标口径定义
+#
+# 这个文件是整套方案里价值密度最高的部分。BIRD 基准上，榜首系统去掉
+# 人工业务知识提示后准确率从 81.95 掉到 67.41 —— 14 分的落差全部来自
+# 这类无法从 DDL 推断的业务口径。
+#
+# 每个指标必须回答三个问题：
+#   1. expression  —— 算什么（聚合表达式）
+#   2. requiredFilters —— 在什么范围内算（口径边界，最容易出错的地方）
+#   3. caveats     —— 有哪些已知的口径分歧（供 Agent 在歧义时反问用户）
+# ============================================================
+
+metrics:
+
+  - name: gmv
+    displayName: 销售额
+    synonyms: [ GMV, 成交额, 营业额, 销售金额, 交易额, 流水 ]
+    description: 已支付订单的实付金额合计。默认口径不扣退款，退款单本身不计入。
+    expression: "SUM(fact_order.pay_amount)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 元
+    format: "#,##0.00"
+    caveats:
+      - "本口径不含已退款订单（refunded）。若用户想看含退款的总流水，应改用 gross_gmv。"
+      - "不扣减退款金额。若用户强调「净」「实际到账」，应改用 net_sales。"
+
+  - name: gross_gmv
+    displayName: 总流水
+    synonyms: [ 含退款销售额, 总成交额, 支付总额 ]
+    description: 所有发生过支付的订单实付金额合计，含后续已退款的订单。
+    expression: "SUM(fact_order.pay_amount)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed', 'refunded')"
+    unit: 元
+    format: "#,##0.00"
+
+  - name: net_sales
+    displayName: 净销售额
+    synonyms: [ 净额, 实际收入, 扣退后销售额 ]
+    description: 总流水扣减退款金额，反映实际到账收入。
+    expression: "SUM(fact_order.pay_amount) - SUM(fact_order.refund_amount)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed', 'refunded')"
+    unit: 元
+    format: "#,##0.00"
+
+  - name: order_count
+    displayName: 订单量
+    synonyms: [ 订单数, 单量, 成交笔数, 下单量 ]
+    description: 已支付订单的笔数。未支付与已取消的订单不计入。
+    expression: "COUNT(DISTINCT fact_order.order_id)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 笔
+    format: "#,##0"
+    caveats:
+      - "不含 created（待支付）与 cancelled（已取消）。若用户问「一共下了多少单」可能想要全部状态，需确认。"
+
+  - name: avg_order_value
+    displayName: 客单价
+    synonyms: [ 平均订单金额, AOV, 单均价 ]
+    description: 销售额除以订单量，即每笔成交订单的平均金额。
+    expression: "SUM(fact_order.pay_amount) / NULLIF(COUNT(DISTINCT fact_order.order_id), 0)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 元
+    format: "#,##0.00"
+    caveats:
+      - "分母是订单数而非客户数。若用户想要「每个客户平均花多少」，那是 arpu，不是客单价。"
+
+  - name: arpu
+    displayName: 客均消费
+    synonyms: [ 人均消费, ARPU, 每客户平均金额 ]
+    description: 销售额除以下单客户数，即每个下单客户的平均消费金额。
+    expression: "SUM(fact_order.pay_amount) / NULLIF(COUNT(DISTINCT fact_order.customer_id), 0)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 元
+    format: "#,##0.00"
+
+  - name: buyer_count
+    displayName: 下单客户数
+    synonyms: [ 购买人数, 成交客户数, 买家数, 下单人数 ]
+    description: 产生过已支付订单的去重客户数。
+    expression: "COUNT(DISTINCT fact_order.customer_id)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 人
+    format: "#,##0"
+
+  - name: refund_amount
+    displayName: 退款金额
+    synonyms: [ 退款额, 退货金额 ]
+    description: 已退款订单的退款金额合计。
+    expression: "SUM(fact_order.refund_amount)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status = 'refunded'"
+    unit: 元
+    format: "#,##0.00"
+
+  - name: refund_rate
+    displayName: 退款率
+    synonyms: [ 退货率, 退单率 ]
+    description: 退款金额占总流水的比例。分母是含退款的总流水，不是 gmv。
+    expression: "SUM(fact_order.refund_amount) / NULLIF(SUM(fact_order.pay_amount), 0)"
+    baseTable: fact_order
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed', 'refunded')"
+    unit: "%"
+    format: "0.00%"
+    caveats:
+      - "这是金额口径的退款率。若用户想看笔数口径（退款单数/总单数），需明确说明。"
+
+  - name: cancel_rate
+    displayName: 取消率
+    synonyms: [ 订单取消率, 废单率 ]
+    description: 已取消订单笔数占全部订单笔数的比例。分母含所有状态。
+    expression: "SUM(CASE WHEN fact_order.order_status = 'cancelled' THEN 1 ELSE 0 END) / NULLIF(COUNT(*), 0)"
+    baseTable: fact_order
+    requiredFilters: [ ]
+    unit: "%"
+    format: "0.00%"
+
+  - name: sales_qty
+    displayName: 销量
+    synonyms: [ 销售件数, 件数, 卖出数量, 商品数量 ]
+    description: 已支付订单中的商品件数合计。需要关联订单明细表。
+    expression: "SUM(fact_order_item.quantity)"
+    baseTable: fact_order_item
+    requiredJoins: [ fact_order_item__fact_order ]
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 件
+    format: "#,##0"
+
+  - name: gross_profit
+    displayName: 毛利
+    synonyms: [ 毛利额, 利润 ]
+    description: 明细实付金额减去商品成本（成本 = 数量 × 单位成本）。不含运费与优惠分摊。
+    expression: "SUM(fact_order_item.item_pay_amount) - SUM(fact_order_item.quantity * dim_product.unit_cost)"
+    baseTable: fact_order_item
+    requiredJoins: [ fact_order_item__fact_order, fact_order_item__dim_product ]
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: 元
+    format: "#,##0.00"
+    caveats:
+      - "毛利未扣运费与平台费用，是商品毛利而非经营利润。"
+
+  - name: gross_margin
+    displayName: 毛利率
+    synonyms: [ 利润率, 毛利占比 ]
+    description: 毛利占明细实付金额的比例。
+    expression: "(SUM(fact_order_item.item_pay_amount) - SUM(fact_order_item.quantity * dim_product.unit_cost)) / NULLIF(SUM(fact_order_item.item_pay_amount), 0)"
+    baseTable: fact_order_item
+    requiredJoins: [ fact_order_item__fact_order, fact_order_item__dim_product ]
+    requiredFilters:
+      - "fact_order.order_status IN ('paid', 'shipped', 'completed')"
+    unit: "%"
+    format: "0.00%"

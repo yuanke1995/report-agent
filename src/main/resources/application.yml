@@ -1,0 +1,131 @@
+server:
+  port: 8091
+  servlet:
+    context-path: /report-agent
+
+spring:
+  application:
+    name: report-agent
+  profiles:
+    # 本地开发：local（含密钥，已 gitignore）；生产不激活 local，全部走环境变量
+    active: local
+
+  autoconfigure:
+    # Redis 向量库在启动时会调用 embedding 接口探测向量维度，没有可用的 embedding
+    # 服务就起不来。它是阶段 4（Schema Linking）才需要的能力，所以默认排除，
+    # 阶段 4 接入时把 AGENT_VECTOR_EXCLUDE 设为空字符串即可打开。
+    exclude: ${AGENT_VECTOR_EXCLUDE:org.springframework.ai.vectorstore.redis.autoconfigure.RedisVectorStoreAutoConfiguration}
+
+  # 元数据库：会话/消息/审计/配置（可读写）
+  datasource:
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    url: jdbc:mysql://${DB_HOST:127.0.0.1}:${DB_PORT:3306}/${DB_NAME:report_agent}?useUnicode=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&nullCatalogMeansCurrent=true&allowMultiQueries=true
+    username: ${DB_USERNAME:root}
+    password: ${DB_PASSWORD:}
+
+  # 启动自动执行 schema.sql（CREATE TABLE IF NOT EXISTS，重复执行安全）
+  sql:
+    init:
+      mode: always
+
+  data:
+    redis:
+      client-type: jedis
+      host: ${REDIS_HOST:127.0.0.1}
+      port: ${REDIS_PORT:6379}
+      password: ${REDIS_PASSWORD:}
+      database: ${REDIS_DB:0}
+
+  ai:
+    openai:
+      api-key: ${AI_API_KEY:}
+      base-url: ${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}
+      chat:
+        options:
+          model: ${AI_CHAT_MODEL:qwen-plus}
+          # SQL 生成要的是确定性，不是创造力。这个值不要往上调。
+          temperature: 0.1
+      embedding:
+        api-key: ${AI_EMBEDDING_KEY:${AI_API_KEY:}}
+        base-url: ${AI_EMBEDDING_BASE_URL:${AI_BASE_URL:https://dashscope.aliyuncs.com/compatible-mode}}
+        options:
+          model: ${AI_EMBEDDING_MODEL:text-embedding-v4}
+
+    # 阶段 4 Schema Linking 用：表/列描述、指标口径、golden SQL 的向量索引
+    vectorstore:
+      redis:
+        initialize-schema: true
+        index-name: report-agent-index
+        prefix: "report-agent:vec:"
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: ${MYBATIS_LOG_IMPL:org.apache.ibatis.logging.slf4j.Slf4jImpl}
+  global-config:
+    db-config:
+      logic-delete-field: deleted
+      logic-delete-value: 1
+      logic-not-delete-value: 0
+
+report-agent:
+  # 内部鉴权 token，必须通过环境变量提供，缺失启动即失败
+  trusted-token: ${AGENT_TRUSTED_TOKEN}
+
+  # 业务库：Agent 查询的目标库。account 必须是只读账号。
+  business:
+    url: jdbc:mysql://${BIZ_DB_HOST:127.0.0.1}:${BIZ_DB_PORT:3306}/${BIZ_DB_NAME:report_demo}?useUnicode=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    username: ${BIZ_DB_USERNAME:report_ro}
+    password: ${BIZ_DB_PASSWORD:report_ro_pwd}
+    # 语义层校验要读 INFORMATION_SCHEMA，需要库名
+    schema: ${BIZ_DB_NAME:report_demo}
+    max-pool-size: 5
+
+  sql-exec:
+    max-rows: 1000
+    timeout-seconds: 20
+    explain-dry-run: true
+
+  agent:
+    max-steps: 8
+    max-sql-repairs: 2
+    timeout-ms: 120000
+    sse-timeout-ms: 300000
+
+  context:
+    model-windows: ${AI_CONTEXT_MODEL_WINDOWS:qwen3=131072,qwen-plus=131072,qwen-max=32768,deepseek=65536,default=32768}
+    default-window-tokens: 32768
+    safety-factor: 0.7
+    # 报表场景要塞表结构 DDL + 指标口径 + few-shot，比纯 RAG 更吃上下文，
+    # 所以这个上限比 dtbd 的 8000 放宽到 12000
+    cost-cap-tokens: ${AI_CONTEXT_COST_CAP:12000}
+    max-output-tokens: 2000
+    history-max-tokens: 1200
+
+  ratelimit:
+    enabled: ${AGENT_RATELIMIT_ENABLED:true}
+    chat-per-minute: ${AGENT_RATELIMIT_CHAT:10}
+    query-per-minute: ${AGENT_RATELIMIT_QUERY:30}
+
+logging:
+  level:
+    com.wisesoft.agent: ${LOG_LEVEL_APP:info}
+    org.springframework.ai: ${LOG_LEVEL_SPRING_AI:info}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: ${ACTUATOR_HEALTH_DETAILS:never}
+
+springdoc:
+  swagger-ui:
+    path: /swagger-ui.html
+    tags-sorter: alpha
+    operations-sorter: alpha
+  api-docs:
+    path: /v3/api-docs
+  show-actuator: false

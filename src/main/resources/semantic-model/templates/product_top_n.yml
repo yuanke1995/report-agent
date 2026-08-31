@@ -1,0 +1,59 @@
+id: product_top_n
+name: 商品销售排行
+description: 按商品统计销售额、销量、毛利并取前 N 名，可选按一级类目筛选。
+triggers:
+  - 卖得最好的商品是哪些
+  - 销售额 TOP10 的商品
+  - 手机数码类目下最畅销的商品
+  - 商品销售排行榜
+  - 哪个商品毛利最高
+
+params:
+  - name: startDate
+    type: date
+    displayName: 开始日期
+    required: true
+    description: yyyy-MM-dd 格式，含当天
+  - name: endDate
+    type: date
+    displayName: 结束日期
+    required: true
+    description: yyyy-MM-dd 格式，含当天
+  - name: topN
+    type: int
+    displayName: 取前 N 名
+    required: false
+    defaultValue: "10"
+    min: 1
+    max: 100
+    description: 返回的商品数量，默认 10
+  - name: categoryL1
+    type: enum
+    displayName: 一级类目
+    required: false
+    description: 留空表示全部类目
+    options: [ 手机数码, 家用电器, 服饰鞋包, 食品生鲜, 美妆个护 ]
+
+# 商品维度的销售额用明细实付 item_pay_amount，不用订单表的 pay_amount（那含运费且无法拆到商品）
+sql: |
+  SELECT p.product_name                                                  AS 商品名称,
+         p.category_l1                                                   AS 一级类目,
+         p.brand                                                         AS 品牌,
+         ROUND(SUM(i.item_pay_amount), 2)                                AS 销售额,
+         SUM(i.quantity)                                                 AS 销量,
+         ROUND(SUM(i.item_pay_amount) - SUM(i.quantity * p.unit_cost), 2) AS 毛利
+  FROM fact_order_item i
+           INNER JOIN fact_order o ON o.order_id = i.order_id
+           INNER JOIN dim_product p ON p.product_id = i.product_id
+  WHERE o.order_status IN ('paid', 'shipped', 'completed')
+    AND i.order_date >= :startDate
+    AND i.order_date <= :endDate
+    AND (:categoryL1 IS NULL OR p.category_l1 = :categoryL1)
+  GROUP BY p.product_id, p.product_name, p.category_l1, p.brand
+  ORDER BY 销售额 DESC
+  LIMIT :topN
+
+chart:
+  type: bar
+  xField: 商品名称
+  yFields: [ 销售额 ]

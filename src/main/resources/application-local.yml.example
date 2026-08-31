@@ -1,0 +1,43 @@
+# ============================================================
+# 本地开发配置模板
+#
+# 用法：复制成 application-local.yml 后填入真实值。
+# application-local.yml 已被 .gitignore 排除，绝不会入库。
+#
+# 注意：不要把密钥直接写进 application.yml 或任何 src 目录下会入库的文件。
+# ============================================================
+
+spring:
+  datasource:
+    # 元数据库（会话/审计/配置），需要读写权限
+    url: jdbc:mysql://127.0.0.1:3306/report_agent?useUnicode=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8&nullCatalogMeansCurrent=true&allowMultiQueries=true
+    username: root
+    password: "填你的本地 MySQL 密码，无密码留空字符串"
+
+  ai:
+    openai:
+      # 阿里云 DashScope 兼容模式，或任何 OpenAI 兼容网关
+      api-key: "sk-填你的 key"
+      base-url: https://dashscope.aliyuncs.com/compatible-mode
+      chat:
+        options:
+          model: qwen-plus
+      embedding:
+        api-key: "sk-填你的 key"
+        options:
+          model: text-embedding-v4
+
+report-agent:
+  # 随便生成一个长随机串即可，本地开发用
+  trusted-token: "local-dev-token-change-me"
+
+  business:
+    # 业务库用只读账号，db/01_business_schema.sql 已经创建好 report_ro
+    url: jdbc:mysql://127.0.0.1:3306/report_demo?useUnicode=true&useSSL=false&serverTimezone=Asia/Shanghai&characterEncoding=utf8
+    username: report_ro
+    password: report_ro_pwd
+    schema: report_demo
+
+logging:
+  level:
+    com.wisesoft.agent: debug

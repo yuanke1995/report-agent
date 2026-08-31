@@ -1,0 +1,40 @@
+id: sales_monthly_summary
+name: 月度销售汇总
+description: 按月统计销售额、订单量、客单价、下单客户数，用于看整体销售趋势。
+triggers:
+  - 最近半年的销售趋势
+  - 按月看一下销售额
+  - 今年每个月的订单量和客单价
+  - 月度销售汇总
+  - 3月到8月的销售情况
+
+params:
+  - name: startMonth
+    type: month
+    displayName: 起始月份
+    required: true
+    description: yyyy-MM 格式，含当月
+  - name: endMonth
+    type: month
+    displayName: 结束月份
+    required: true
+    description: yyyy-MM 格式，含当月
+
+# 口径与 metrics.yml 的 gmv / order_count / avg_order_value / buyer_count 严格一致
+sql: |
+  SELECT DATE_FORMAT(o.order_date, '%Y-%m')                              AS 月份,
+         ROUND(SUM(o.pay_amount), 2)                                     AS 销售额,
+         COUNT(DISTINCT o.order_id)                                      AS 订单量,
+         ROUND(SUM(o.pay_amount) / NULLIF(COUNT(DISTINCT o.order_id), 0), 2) AS 客单价,
+         COUNT(DISTINCT o.customer_id)                                   AS 下单客户数
+  FROM fact_order o
+  WHERE o.order_status IN ('paid', 'shipped', 'completed')
+    AND DATE_FORMAT(o.order_date, '%Y-%m') >= :startMonth
+    AND DATE_FORMAT(o.order_date, '%Y-%m') <= :endMonth
+  GROUP BY DATE_FORMAT(o.order_date, '%Y-%m')
+  ORDER BY 月份
+
+chart:
+  type: line
+  xField: 月份
+  yFields: [ 销售额, 订单量 ]

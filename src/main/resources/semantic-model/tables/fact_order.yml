@@ -1,0 +1,120 @@
+table: fact_order
+displayName: 订单表
+description: 订单主表，一行一笔订单。销售额、订单量、客单价等核心指标都基于这张表。
+grain: 一行 = 一笔订单
+synonyms: [ 订单, 订单表, 销售订单, 交易表 ]
+rowCountHint: 30000
+
+columns:
+
+  - name: order_id
+    type: BIGINT
+    displayName: 订单ID
+    role: id
+    description: 订单主键
+
+  - name: order_no
+    type: VARCHAR(32)
+    displayName: 订单号
+    role: dimension
+    description: 业务订单号，格式 SO+日期+序号
+
+  - name: customer_id
+    type: INT
+    displayName: 客户ID
+    role: id
+    description: 下单客户，关联 dim_customer
+
+  - name: region_id
+    type: INT
+    displayName: 收货地区ID
+    role: id
+    description: 关联 dim_region。这是收货地区，不是客户注册地区。
+
+  - name: order_date
+    type: DATE
+    displayName: 下单日期
+    role: time
+    isPrimaryTimeColumn: true
+    description: 订单创建日期。所有时间范围过滤默认用这一列。
+    synonyms: [ 日期, 下单时间, 订单日期, 成交日期 ]
+
+  - name: order_status
+    type: VARCHAR(16)
+    displayName: 订单状态
+    role: dimension
+    description: 订单生命周期状态。绝大多数销售指标都需要按此列过滤。
+    enums:
+      created: 待支付
+      paid: 已支付
+      shipped: 已发货
+      completed: 已完成
+      refunded: 已退款
+      cancelled: 已取消
+    notes: >
+      口径要点：created 和 cancelled 的订单 pay_amount 恒为 0，统计销售额时必须排除，
+      否则会稀释客单价等比率型指标。refunded 的订单发生过支付，是否计入取决于指标口径，
+      详见 metrics.yml 中 gmv / gross_gmv / net_sales 三者的区别。
+
+  - name: channel
+    type: VARCHAR(16)
+    displayName: 下单渠道
+    role: dimension
+    description: 订单来源渠道
+    enums:
+      app: App
+      web: 网页
+      mini_program: 小程序
+      offline: 线下门店
+    synonyms: [ 渠道, 来源, 平台 ]
+
+  - name: order_amount
+    type: DECIMAL(14,2)
+    displayName: 应付金额
+    role: measure
+    unit: 元
+    description: 商品总额，未扣优惠、未加运费。等于该订单所有明细 item_amount 之和。
+    notes: 这不是销售额。用户问「销售额」时应该用 pay_amount，不是这一列。
+
+  - name: discount_amount
+    type: DECIMAL(14,2)
+    displayName: 优惠金额
+    role: measure
+    unit: 元
+    description: 该订单的优惠总额，等于所有明细 item_discount 之和
+
+  - name: freight_amount
+    type: DECIMAL(14,2)
+    displayName: 运费
+    role: measure
+    unit: 元
+    description: 运费。业务规则：实付满 99 元免运费，否则收 10 元。
+
+  - name: pay_amount
+    type: DECIMAL(14,2)
+    displayName: 实付金额
+    role: measure
+    unit: 元
+    description: 客户实际支付金额 = 应付 - 优惠 + 运费。未支付/已取消订单为 0。
+    notes: 这是销售额类指标的标准计算列。
+    synonyms: [ 实付, 支付金额, 成交金额 ]
+
+  - name: refund_amount
+    type: DECIMAL(14,2)
+    displayName: 退款金额
+    role: measure
+    unit: 元
+    description: 退款金额，仅 refunded 状态的订单非 0（目前均为全额退款）
+
+  - name: item_count
+    type: INT
+    displayName: 商品件数
+    role: measure
+    unit: 件
+    description: 该订单包含的商品总件数（各明细 quantity 之和）
+
+  - name: created_at
+    type: DATETIME
+    displayName: 创建时间
+    role: time
+    description: 精确到秒的下单时间。需要按小时分析时用这一列，按天及以上用 order_date。

@@ -1,0 +1,85 @@
+table: dim_product
+displayName: 商品表
+description: 商品维度，含类目、品牌、成本与标价。毛利类指标依赖这张表的 unit_cost。
+grain: 一行 = 一个商品
+synonyms: [ 商品, 产品, 货品, SKU ]
+rowCountHint: 200
+
+columns:
+
+  - name: product_id
+    type: INT
+    displayName: 商品ID
+    role: id
+    description: 主键
+
+  - name: product_code
+    type: VARCHAR(32)
+    displayName: 商品编码
+    role: dimension
+    description: 业务编码，格式 P+5位序号
+
+  - name: product_name
+    type: VARCHAR(100)
+    displayName: 商品名称
+    role: dimension
+    description: 商品全称
+    synonyms: [ 商品名, 品名 ]
+
+  - name: category_l1
+    type: VARCHAR(30)
+    displayName: 一级类目
+    role: dimension
+    description: 顶层类目
+    enums:
+      手机数码: 手机数码
+      家用电器: 家用电器
+      服饰鞋包: 服饰鞋包
+      食品生鲜: 食品生鲜
+      美妆个护: 美妆个护
+    synonyms: [ 大类, 一级分类, 品类 ]
+
+  - name: category_l2
+    type: VARCHAR(30)
+    displayName: 二级类目
+    role: dimension
+    description: >
+      细分类目，每个一级类目下有 3 个：
+      手机数码=手机/平板电脑/智能穿戴，家用电器=冰箱/洗衣机/空调，
+      服饰鞋包=男装/女装/箱包，食品生鲜=休闲零食/粮油调味/生鲜果蔬，
+      美妆个护=护肤/彩妆/洗护
+    synonyms: [ 小类, 二级分类, 子类目 ]
+
+  - name: brand
+    type: VARCHAR(30)
+    displayName: 品牌
+    role: dimension
+    description: 商品品牌，共 10 个
+    synonyms: [ 牌子 ]
+
+  - name: unit_cost
+    type: DECIMAL(12,2)
+    displayName: 单位成本
+    role: measure
+    unit: 元
+    description: 单件商品的采购成本，计算毛利时用
+
+  - name: list_price
+    type: DECIMAL(12,2)
+    displayName: 标价
+    role: measure
+    unit: 元
+    description: 商品挂牌价
+    notes: 这不是成交价。实际成交价在 fact_order_item.unit_price，通常低于标价。
+
+  - name: status
+    type: VARCHAR(16)
+    displayName: 商品状态
+    role: dimension
+    description: 上下架状态
+    enums:
+      on_sale: 在售
+      off_shelf: 下架
+    notes: >
+      口径要点：历史销售统计不应过滤 status —— 下架商品过去的销售额依然有效。
+      只有在问「当前在售商品」「现在卖什么」这类现状问题时才需要加 status = 'on_sale'。
