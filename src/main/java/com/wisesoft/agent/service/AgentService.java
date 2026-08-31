@@ -240,10 +240,15 @@ public class AgentService {
                             def.inputSchema()));
                 })
                 .toList();
-        return OpenAiChatOptions.builder()
+        OpenAiChatOptions options = OpenAiChatOptions.builder()
                 .temperature(configService.getDouble("chat.temperature", 0.1))
                 .tools(tools)
                 .build();
+        // 关闭思考模式：qwen3.7-flash 大 prompt + 思考 + 生成 SQL 会超过网关
+        // 约 90 秒的响应超时（实测非流式请求 91 秒被网关断开 EOF）。
+        // 报表场景的确定性需求下，关思考反而更快更稳。
+        options.setExtraBody(Map.of("enable_thinking", false));
+        return options;
     }
 
     // ------------------------------------------------------------
