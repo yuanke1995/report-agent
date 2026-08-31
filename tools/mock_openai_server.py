@@ -32,8 +32,11 @@ class Handler(BaseHTTPRequestHandler):
         body = json.loads(raw or b"{}")
         STATE["calls"] += 1
         n = STATE["calls"]
+        # 循环模式：请求序号对 3 取模（1→错误SQL, 2→修正SQL, 0→最终回答）。
+        # 这样任何时刻发起测试都能看到完整链路，不会被之前的测试耗尽计数。
+        n = STATE["calls"] % 3 or 3
 
-        print(f"\n[mock] === 第 {n} 次请求 ===", flush=True)
+        print(f"\n[mock] === 第 {STATE['calls']} 次请求（周期内第 {n} 次）===", flush=True)
         tools = body.get("tools") or []
         print(f"[mock] tools 数量: {len(tools)}", flush=True)
         for m in body.get("messages", []):
@@ -104,10 +107,16 @@ class Handler(BaseHTTPRequestHandler):
                                {"sql": "SELECT pay_amnt FROM fact_order LIMIT 5"})
 
     def _fixed_sql(self):
-        """第 2 轮：模型读懂了 SqlGuard 的结构化错误，修正列名后重试"""
-        print("[mock] → 第 2 轮：调用 execute_sql（修正为 pay_amount）", flush=True)
+        """第 2 轮：模型读懂了 SqlGuard 的结构化错误，修正列名后重试。
+        返回多列聚合 SQL：既验证列校验，也让前端能渲染表格 + 折线图。"""
+        print("[mock] → 第 2 轮：调用 execute_sql（修正为多列聚合）", flush=True)
         return self._tool_call("call_fixed_sql", "execute_sql",
-                               {"sql": "SELECT pay_amount FROM fact_order LIMIT 5"})
+                               {"sql": "SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS 月份, "
+                                       "ROUND(SUM(o.pay_amount), 2) AS 销售额 "
+                                       "FROM fact_order o "
+                                       "WHERE o.order_status IN ('paid', 'shipped', 'completed') "
+                                       "GROUP BY DATE_FORMAT(o.order_date, '%Y-%m') "
+                                       "ORDER BY 月份 LIMIT 6"})
 
     def _final_answer(self, body):
         """第 3 轮：基于真实数据给出最终回答"""

@@ -108,6 +108,19 @@ java -jar target/report-agent.jar
 mvn test   # 语义层解析、同义词解析、join 白名单、枚举映射的单元测试
 ```
 
+## 前端
+
+```bash
+cd web
+npm install
+npm run dev        # 开发模式（代理 /report-agent 到 127.0.0.1:8091）
+npm run build      # 产物打进后端 jar 的 static/ 目录
+```
+
+浏览器打开 `http://127.0.0.1:8091/report-agent/`（后端直接提供前端静态资源）。
+页面包含：SSE 流式问答、Agent 执行轨迹（每步进行中/成功/失败）、结果表格、
+ECharts 图表（时间列自动折线图）、SQL 折叠面板、👍/👎 反馈（差评回流评估集）。
+
 ## NL2SQL 评测
 
 ```bash
@@ -128,4 +141,4 @@ java -jar target/report-agent.jar --eval-self
 - [x] **阶段 2 · Tool Calling** —— Spring AI `@Tool` 工具集，模板路径打通（mock 端到端验证）
 - [x] **阶段 3 · ReAct 循环** —— 手写 observe→think→act 循环、SqlGuard AST 校验、错误自修正、轮次上限
 - [x] **阶段 4 · NL2SQL 兜底** —— Schema Linking（同义词 + 关键词召回，向量接口留位）、golden few-shot、20 题评测集
-- [ ] **阶段 5 · 前端与闭环** —— Vue 前端、ECharts、执行轨迹可视化、反馈闭环
+- [x] **阶段 5 · 前端与闭环** —— Vue 3 + AntDV + ECharts（SSE 流式/执行轨迹/表格/图表/SQL 面板/反馈按钮）
