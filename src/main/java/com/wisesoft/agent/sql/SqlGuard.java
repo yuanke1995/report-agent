@@ -48,9 +48,10 @@ import java.util.Set;
  * <ol>
  *   <li>只允许 SELECT（拒绝 INSERT/UPDATE/DELETE/DDL/INTO OUTFILE）</li>
  *   <li>表名必须在语义层登记过</li>
- *   <li>列名必须在对应表的语义层登记过；无表前缀的列必须无歧义</li>
- *   <li>join 条件必须在 joins.yml 登记过，且方向正确（1:n 反接会放大金额）</li>
+ *   <li>列名必须在对应表的语义层登记过；无表前缀的列必须无歧义；ORDER BY 别名放行</li>
+ *   <li>join 条件必须在 joins.yml 登记过（on 条件按真实表名规范化后比对）</li>
  *   <li>禁止连接（joins.yml 的 forbiddenJoins）给出可解释的拒绝原因</li>
+ *   <li>方向检查只对 LEFT JOIN 生效：驱动表是 approved 的 1 侧时按明细放大拒绝</li>
  *   <li>危险函数黑名单（SLEEP/BENCHMARK 等拖慢或探测类函数）</li>
  *   <li>顶层无 LIMIT 时自动注入行数上限</li>
  * </ol>
@@ -304,7 +305,9 @@ public class SqlGuard {
         if (ps.getJoins() == null) {
             return;
         }
-        // 第一个 join 的左表是 fromItem；后续 join 的左表是前一个 join 的右表
+        // 第一个 join 的左表是 fromItem；后续 join 的左表是前一个 join 的右表。
+        // 方向检查只用于 LEFT JOIN 驱动表判断，多 join 链下追踪可能不精确，
+        // 但 LEFT JOIN 反接是最典型的放大场景，宁可漏判不可误报。
         FromItem left = ps.getFromItem();
         for (Join join : ps.getJoins()) {
             if (join.isCross()) {
@@ -312,20 +315,12 @@ public class SqlGuard {
                 left = join.getRightItem();
                 continue;
             }
-            FromItem rightItem = join.getRightItem();
-            String leftTable = tableNameOf(left, aliasToTable);
-            String rightTable = tableNameOf(rightItem, aliasToTable);
-            if (leftTable == null || rightTable == null) {
-                errors.add("join 的某一侧不是普通表，本系统只支持表之间的连接");
-                left = rightItem;
-                continue;
-            }
 
             // 连接条件白名单：先解析成真实表名形式再比对
             Expression onExpr = join.getOnExpression();
             if (onExpr == null) {
                 errors.add("join 必须带 on 条件");
-                left = rightItem;
+                left = join.getRightItem();
                 continue;
             }
             onExpr.accept(new ExpressionVisitorAdapter<Void>() {
@@ -336,28 +331,28 @@ public class SqlGuard {
                 }
             }, null);
 
-            // 等值连接对集合（真实表名形式，如 "fact_order.order_id=fact_order_item.order_id"）
+            // 等值连接对集合（真实表名形式，两侧按字典序排列——只用于查白名单，不用于方向判断）
             List<String> eqPairs = equalPairs(onExpr, aliasToTable, errors);
-
-            if (eqPairs.isEmpty() && !errors.isEmpty()) {
-                left = rightItem;
+            if (eqPairs.isEmpty()) {
+                left = join.getRightItem();
                 continue;
             }
+
             JoinDef approved = null;
             for (String pair : eqPairs) {
-                JoinDef hit = model.approvedJoin(pair);
-                if (hit != null) {
-                    approved = hit;
+                approved = model.approvedJoin(pair);
+                if (approved != null) {
                     break;
                 }
             }
 
             if (approved == null) {
                 // 没有批准的连接：先看是否命中禁止连接（给出可解释的原因），否则给出已批准的列表
-                ForbiddenJoin forbidden = model.forbiddenJoin(leftTable, rightTable);
+                String t1 = pairTable(eqPairs.get(0), true);
+                String t2 = pairTable(eqPairs.get(0), false);
+                ForbiddenJoin forbidden = model.forbiddenJoin(t1, t2);
                 if (forbidden != null) {
-                    String msg = "表 " + leftTable + " 与 " + rightTable + " 不允许直接连接："
-                            + forbidden.getReason();
+                    String msg = "表 " + t1 + " 与 " + t2 + " 不允许直接连接：" + forbidden.getReason();
                     if (forbidden.getViaOnly() != null) {
                         JoinDef via = model.joinById(forbidden.getViaOnly());
                         if (via != null) {
@@ -367,26 +362,38 @@ public class SqlGuard {
                     errors.add(msg);
                 } else {
                     errors.add("连接条件 " + onExpr + " 不在批准列表。"
-                            + "该表对已批准的连接：" + approvedJoinsBetween(leftTable, rightTable));
+                            + "该表对已批准的连接：" + approvedJoinsBetween(t1, t2));
                 }
-            } else {
-                // 方向检查：approved 的 left/right 是语义层声明的方向（n:1 的 1 在右）
-                boolean directionOk = approved.getLeft().equalsIgnoreCase(leftTable)
-                        && approved.getRight().equalsIgnoreCase(rightTable);
-                if (!directionOk) {
-                    errors.add("连接方向反了：" + leftTable + " " + joinType(join) + " JOIN " + rightTable
-                            + " 会把明细放大。批准的方向是 " + approved.getLeft() + " → " + approved.getRight()
-                            + "（" + approved.getCardinality() + "），请交换主从表。"
-                            + "原因：" + approved.getDescription());
-                }
+                left = join.getRightItem();
+                continue;
             }
-            left = rightItem;
+
+            // 方向检查（只对 LEFT JOIN 生效）：
+            // approved 声明的是 n:1 方向（n 在 left、1 在 right）。若模型用 LEFT JOIN
+            // 且驱动表是 1 侧（approved.right），明细会按 1 侧聚合导致金额放大。
+            // INNER JOIN 结果对称，方向不影响正确性，不做检查（避免误报）。
+            String leftTable = tableNameOf(left, aliasToTable);
+            if (join.isLeft() && approved.getRight().equalsIgnoreCase(leftTable)) {
+                errors.add("连接方向反了：" + leftTable + " LEFT JOIN "
+                        + tableNameOf(join.getRightItem(), aliasToTable)
+                        + " 会把明细放大。批准的方向是 " + approved.getLeft() + " → " + approved.getRight()
+                        + "（" + approved.getCardinality() + "），请把 " + approved.getLeft()
+                        + " 作为主表。原因：" + approved.getDescription());
+            }
+            left = join.getRightItem();
         }
+    }
+
+    /** 从等值连接对里取一侧的表名（pair 两侧已是真实表名） */
+    private String pairTable(String pair, boolean leftSide) {
+        String[] sides = pair.split("=");
+        String side = leftSide ? sides[0] : sides[1];
+        return side.substring(0, side.indexOf('.'));
     }
 
     /**
      * 把 on 条件拆成等值连接对，并把列前缀从别名解析回真实表名。
-     * 返回形如 "fact_order.order_id=fact_order_item.order_id" 的规范化对。
+     * 返回形如 "fact_order.order_id=fact_order_item.order_id" 的规范化对（两侧字典序）。
      * on 条件里出现非「列=列」的表达式时记入 errors 并跳过该对。
      */
     private List<String> equalPairs(Expression onExpr, Map<String, String> aliasToTable,

@@ -1,0 +1,217 @@
+# ============================================================
+# NL2SQL 评测集
+#
+# 每条 = 一个真实业务问题 + 人工验证过的标准 SQL。
+# 评测器执行「模型生成的 SQL」与「标准 SQL」，对比结果集判断对错。
+#
+# 这是整个系统的回归基线：改 prompt、改语义层、换模型之后，
+# 跑一遍就知道准确率是变好还是变坏。
+#
+# 用法：java -jar report-agent.jar --eval
+# 自检模式（不调模型，验证评测链路本身）：--eval-self
+# ============================================================
+
+cases:
+
+  # ---------- 区域 / 维度过滤 ----------
+  - question: 华南区上个月的销售额是多少
+    expectedSql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+               INNER JOIN dim_region r ON r.region_id = o.region_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND r.region_name = '华南'
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-07'
+    note: 区域走订单收货地区；销售额口径三状态过滤
+
+  - question: 华东区 8 月订单量
+    expectedSql: |
+      SELECT COUNT(DISTINCT o.order_id) AS 订单量
+      FROM fact_order o
+               INNER JOIN dim_region r ON r.region_id = o.region_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND r.region_name = '华东'
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-08'
+    note: 订单量口径
+
+  - question: 广东省的销售额
+    expectedSql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+               INNER JOIN dim_region r ON r.region_id = o.region_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND r.province = '广东省'
+    note: 省维度走 province 列
+
+  - question: 上海的销售额
+    expectedSql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+               INNER JOIN dim_region r ON r.region_id = o.region_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND r.city = '上海'
+    note: 市维度走 city 列（不带"市"字）
+
+  # ---------- 客户维度 ----------
+  - question: 金卡客户的消费总额
+    expectedSql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 消费总额
+      FROM fact_order o
+               INNER JOIN dim_customer c ON c.customer_id = o.customer_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND c.customer_level = 'gold'
+    note: 客户等级英文枚举映射
+
+  - question: 铂金客户人数
+    expectedSql: |
+      SELECT COUNT(*) AS 人数
+      FROM dim_customer
+      WHERE customer_level = 'platinum'
+    note: 客户存量问题直接查客户表
+
+  - question: 各客户等级的下单客户数
+    expectedSql: |
+      SELECT c.customer_level, COUNT(DISTINCT o.customer_id) AS 下单客户数
+      FROM fact_order o
+               INNER JOIN dim_customer c ON c.customer_id = o.customer_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+      GROUP BY c.customer_level
+    note: 下单客户数走订单去重
+
+  # ---------- 商品维度 ----------
+  - question: 食品生鲜类目销售额
+    expectedSql: |
+      SELECT ROUND(SUM(i.item_pay_amount), 2) AS 销售额
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND p.category_l1 = '食品生鲜'
+    note: 商品维度销售额用明细实付
+
+  - question: 手机数码类目销量最高的商品
+    expectedSql: |
+      SELECT p.product_name, SUM(i.quantity) AS 销量
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND p.category_l1 = '手机数码'
+      GROUP BY p.product_id, p.product_name
+      ORDER BY 销量 DESC
+      LIMIT 10
+    note: 销量按明细求和，类目过滤在商品表
+
+  - question: 在售商品数量
+    expectedSql: |
+      SELECT COUNT(*) AS 在售商品数
+      FROM dim_product
+      WHERE status = 'on_sale'
+    note: 现状问题才过滤状态
+
+  - question: 8 月销量最高的品牌
+    expectedSql: |
+      SELECT p.brand, SUM(i.quantity) AS 销量
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND i.order_date BETWEEN '2026-08-01' AND '2026-08-31'
+      GROUP BY p.brand
+      ORDER BY 销量 DESC
+      LIMIT 1
+    note: 明细自带日期列，但状态过滤仍需连订单表
+
+  # ---------- 时间趋势 ----------
+  - question: 最近半年每个月销售额
+    expectedSql: |
+      SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS 月份, ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND o.order_date >= '2026-03-01'
+      GROUP BY DATE_FORMAT(o.order_date, '%Y-%m')
+      ORDER BY 月份
+    note: 相对时间换算：今天 2026-08-31，最近半年=3 月 1 日起
+
+  - question: 7 月每日订单量
+    expectedSql: |
+      SELECT o.order_date AS 日期, COUNT(DISTINCT o.order_id) AS 订单量
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND o.order_date BETWEEN '2026-07-01' AND '2026-07-31'
+      GROUP BY o.order_date
+      ORDER BY 日期
+    note: 按日分组用订单日期本身
+
+  # ---------- 比率 / 派生指标 ----------
+  - question: 上个月退款率
+    expectedSql: |
+      SELECT ROUND(SUM(o.refund_amount) / NULLIF(SUM(o.pay_amount), 0), 4) AS 退款率
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed', 'refunded')
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-07'
+    note: 退款率分母含退款单；七月=上个月
+
+  - question: 8 月客单价
+    expectedSql: |
+      SELECT ROUND(SUM(o.pay_amount) / NULLIF(COUNT(DISTINCT o.order_id), 0), 2) AS 客单价
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-08'
+    note: 客单价=销售额/订单量
+
+  - question: 手机数码类目毛利率
+    expectedSql: |
+      SELECT ROUND((SUM(i.item_pay_amount) - SUM(i.quantity * p.unit_cost))
+                       / NULLIF(SUM(i.item_pay_amount), 0), 4) AS 毛利率
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND p.category_l1 = '手机数码'
+    note: 毛利=明细实付-数量×成本
+
+  # ---------- 渠道 / 枚举 ----------
+  - question: 各渠道销售额
+    expectedSql: |
+      SELECT o.channel, ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+      GROUP BY o.channel
+      ORDER BY 销售额 DESC
+    note: 下单渠道在订单表
+
+  - question: 小程序渠道 8 月订单量
+    expectedSql: |
+      SELECT COUNT(DISTINCT o.order_id) AS 订单量
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND o.channel = 'mini_program'
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-08'
+    note: 小程序=mini_program
+
+  # ---------- 综合 ----------
+  - question: 华东区金卡客户 7 月消费总额
+    expectedSql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 消费总额
+      FROM fact_order o
+               INNER JOIN dim_customer c ON c.customer_id = o.customer_id
+               INNER JOIN dim_region r ON r.region_id = o.region_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND r.region_name = '华东'
+        AND c.customer_level = 'gold'
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-07'
+    note: 双维度过滤：收货地区+客户等级
+
+  - question: 各品牌在 8 月的销售额排行
+    expectedSql: |
+      SELECT p.brand, ROUND(SUM(i.item_pay_amount), 2) AS 销售额
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND i.order_date BETWEEN '2026-08-01' AND '2026-08-31'
+      GROUP BY p.brand
+      ORDER BY 销售额 DESC
+      LIMIT 10
+    note: 品牌维度销售额走明细表

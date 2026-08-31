@@ -65,6 +65,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 public class AgentService {
 
     private final ChatModel chatModel;
+    private final SchemaLinkingService schemaLinkingService;
     private final List<ToolCallback> toolCallbacks;
     private final Map<String, ToolCallback> toolCallbackMap;
     private final SemanticPromptBuilder promptBuilder;
@@ -78,6 +79,7 @@ public class AgentService {
     private final ThreadPoolExecutor pipeline;
 
     public AgentService(ChatModel chatModel,
+                        SchemaLinkingService schemaLinkingService,
                         ReportTools reportTools,
                         SemanticPromptBuilder promptBuilder,
                         SemanticModel model,
@@ -86,6 +88,7 @@ public class AgentService {
                         AuditService auditService,
                         AgentProperties properties) {
         this.chatModel = chatModel;
+        this.schemaLinkingService = schemaLinkingService;
         this.toolCallbacks = List.of(MethodToolCallbackProvider.builder()
                 .toolObjects(reportTools)
                 .build()
@@ -170,7 +173,7 @@ public class AgentService {
 
     private String runReAct(AgentRunContext ctx, String question) {
         List<Message> history = new ArrayList<>();
-        history.add(new SystemMessage(buildSystemPrompt()));
+        history.add(new SystemMessage(buildSystemPrompt(question)));
         history.add(new UserMessage(question));
 
         int maxSteps = configService.getInt("agent.maxSteps", properties.getAgent().getMaxSteps());
@@ -284,31 +287,44 @@ public class AgentService {
     }
 
     /**
-     * 系统提示。
+     * 系统提示（每次提问动态构建）。
      * <p>
      * 当前日期必须显式给出——模型不知道今天几号，而"上个月""最近半年"
      * 这类相对时间在报表提问里占比极高，这是最常见的错误来源之一。
+     * <p>
+     * 动态注入 Schema Linking 的结果：相关表结构 + 相关指标口径 + golden 示例。
+     * 模型写 SQL 前不需要先探索一遍表——相关的列名、枚举映射、口径边界
+     * 已经摆在面前了，这是 NL2SQL 准确率的主要来源。
      */
-    private String buildSystemPrompt() {
+    private String buildSystemPrompt(String question) {
         String custom = configService.get("agent.systemPrompt");
         if (custom != null && !custom.isBlank()) {
             return custom.replace("{{today}}", LocalDate.now().toString());
         }
+
+        SchemaLinkingService.LinkingResult linked = schemaLinkingService.link(question);
+
         return """
                 你是企业报表数据助手，负责把用户的自然语言问题转成数据查询并解读结果。
 
                 今天是 %s。用户说的"上个月""最近半年""今年"等相对时间，你要据此换算成
                 具体日期再传给工具，不要把中文时间词原样传入。
 
-                ## 可用的数据表
+                ## 与本次问题相关的表结构（优先使用，列名和枚举值以此为准）
+                %s
+                ## 相关指标口径（涉及这些指标时，口径边界必须照抄）
+                %s
+                ## 参考示例（模仿其写法：join 路径、口径过滤、枚举值）
+                %s
+                ## 全部可用的表（概览，需要更多结构时用 get_table_schema 查看）
                 %s
                 ## 可用的报表模板
                 %s
                 ## 工作流程
                 1. 先判断问题能否匹配上面某个报表模板。能匹配就用 run_report_template，
                    这条路的口径是人工验证过的，准确率最高。
-                2. 匹配不上时：先 get_table_schema 看表结构，涉及指标再 list_metrics 确认口径，
-                   然后用 execute_sql 自己写查询。
+                2. 匹配不上时：优先使用上面已给出的相关表结构写 SQL 并调用 execute_sql；
+                   如果需要的表不在上面，先 get_table_schema 补充查看；涉及指标再 list_metrics 确认口径。
                 3. 遇到真实的业务口径歧义（比如销售额含不含退款），用 ask_clarification 反问，
                    不要替用户做决定。
                 4. 拿到数据后，用一段简洁的中文解读结论：说清关键数字、变化趋势、值得注意的异常。
@@ -321,6 +337,9 @@ public class AgentService {
                 - 解读数据时不要重复罗列整张表格，前端会单独渲染表格和图表，你只需要给结论。
                 """.formatted(
                 LocalDate.now(),
+                promptBuilder.renderTables(linked.tables()),
+                promptBuilder.renderMetrics(linked.metricNames()),
+                promptBuilder.renderGoldenExamples(linked.goldenExamples()),
                 promptBuilder.renderTableCatalog(),
                 promptBuilder.renderTemplateCatalog());
     }

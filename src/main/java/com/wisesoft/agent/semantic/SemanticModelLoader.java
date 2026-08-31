@@ -32,6 +32,7 @@ public class SemanticModelLoader {
     private static final String TEMPLATES_PATTERN = "classpath*:semantic-model/templates/*.yml";
     private static final String METRICS_PATH = "classpath:semantic-model/metrics.yml";
     private static final String JOINS_PATH = "classpath:semantic-model/joins.yml";
+    private static final String GOLDEN_PATH = "classpath:semantic-model/golden/examples.yml";
 
     private final ObjectMapper yaml = new ObjectMapper(new YAMLFactory())
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
@@ -45,17 +46,20 @@ public class SemanticModelLoader {
         List<ReportTemplate> templates = loadEach(TEMPLATES_PATTERN, ReportTemplate.class);
         MetricsFile metricsFile = loadOne(METRICS_PATH, MetricsFile.class);
         JoinsFile joinsFile = loadOne(JOINS_PATH, JoinsFile.class);
+        GoldenFile goldenFile = loadOne(GOLDEN_PATH, GoldenFile.class);
 
         SemanticModel model = new SemanticModel(
                 tables,
                 metricsFile.getMetrics(),
                 joinsFile.getJoins(),
                 joinsFile.getForbiddenJoins(),
-                templates);
+                templates,
+                goldenFile.getExamples());
 
-        log.info("语义层加载完成：{} 张表 / {} 个指标 / {} 条 join 路径 / {} 个报表模板",
+        log.info("语义层加载完成：{} 张表 / {} 个指标 / {} 条 join 路径 / {} 个报表模板 / {} 条 golden 示例",
                 model.getTables().size(), model.getMetrics().size(),
-                model.getJoins().size(), model.getTemplates().size());
+                model.getJoins().size(), model.getTemplates().size(),
+                model.getGoldenExamples().size());
         return model;
     }
 
@@ -109,5 +113,11 @@ public class SemanticModelLoader {
     static class JoinsFile {
         private List<JoinDef> joins = List.of();
         private List<ForbiddenJoin> forbiddenJoins = List.of();
+    }
+
+    @Data
+    @JsonIgnoreProperties(ignoreUnknown = false)
+    static class GoldenFile {
+        private List<GoldenExample> examples = List.of();
     }
 }

@@ -37,11 +37,18 @@ public class SemanticModel {
     /** 小写同义词 → 指标名 */
     private final Map<String, String> metricSynonymIndex;
 
+    /** golden 示例：id → 示例 */
+    private final Map<String, GoldenExample> goldenExamples;
+
+    /** 小写关键词 → 示例 id */
+    private final Map<String, List<String>> goldenKeywordIndex;
+
     public SemanticModel(List<TableDef> tableList,
                          List<MetricDef> metricList,
                          List<JoinDef> joinList,
                          List<ForbiddenJoin> forbiddenList,
-                         List<ReportTemplate> templateList) {
+                         List<ReportTemplate> templateList,
+                         List<GoldenExample> goldenList) {
         Map<String, TableDef> t = new LinkedHashMap<>();
         for (TableDef def : tableList) {
             Map<String, ColumnDef> idx = new LinkedHashMap<>();
@@ -71,6 +78,18 @@ public class SemanticModel {
         this.templates = Map.copyOf(tpl);
 
         this.forbiddenJoins = List.copyOf(forbiddenList);
+
+        Map<String, GoldenExample> g = new LinkedHashMap<>();
+        Map<String, List<String>> gk = new LinkedHashMap<>();
+        for (GoldenExample ex : goldenList) {
+            g.put(ex.getId().toLowerCase(Locale.ROOT), ex);
+            for (String kw : ex.getKeywords()) {
+                String k = kw.toLowerCase(Locale.ROOT);
+                gk.computeIfAbsent(k, x -> new ArrayList<>()).add(ex.getId());
+            }
+        }
+        this.goldenExamples = Map.copyOf(g);
+        this.goldenKeywordIndex = Map.copyOf(gk);
 
         Map<String, String> ts = new LinkedHashMap<>();
         for (TableDef def : tableList) {
@@ -159,7 +178,17 @@ public class SemanticModel {
         return new ArrayList<>(def.getColumnIndex().keySet());
     }
 
+    /** 按关键词查 golden 示例（大小写不敏感），返回示例 id 列表 */
+    public List<String> goldenIdsByKeyword(String keyword) {
+        return goldenKeywordIndex.getOrDefault(keyword.toLowerCase(Locale.ROOT), List.of());
+    }
+
+    public GoldenExample golden(String id) {
+        return id == null ? null : goldenExamples.get(id.toLowerCase(Locale.ROOT));
+    }
+
     public int size() {
-        return tables.size() + metrics.size() + joins.size() + templates.size();
+        return tables.size() + metrics.size() + joins.size() + templates.size()
+                + goldenExamples.size();
     }
 }

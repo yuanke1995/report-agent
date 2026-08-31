@@ -143,6 +143,19 @@
     </dependencyManagement>
 
     <build>
+        <!-- 评测集放在项目根 eval/ 便于人工评审，构建时挂进 classpath -->
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/eval</directory>
+                <targetPath>eval</targetPath>
+                <includes>
+                    <include>*.yml</include>
+                </includes>
+            </resource>
+        </resources>
         <finalName>report-agent</finalName>
         <plugins>
             <plugin>

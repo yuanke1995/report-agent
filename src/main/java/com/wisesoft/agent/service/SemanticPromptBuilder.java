@@ -2,6 +2,7 @@ package com.wisesoft.agent.service;
 
 import com.wisesoft.agent.semantic.ColumnDef;
 import com.wisesoft.agent.semantic.ForbiddenJoin;
+import com.wisesoft.agent.semantic.GoldenExample;
 import com.wisesoft.agent.semantic.JoinDef;
 import com.wisesoft.agent.semantic.MetricDef;
 import com.wisesoft.agent.semantic.ReportTemplate;
@@ -97,13 +98,23 @@ public class SemanticPromptBuilder {
         return sb.toString().replace("|", "\\|");
     }
 
-    /**
-     * 渲染指标口径。这是整个 prompt 里最值钱的部分——
-     * BIRD 的消融实验显示，去掉这类业务知识注入会掉 14 分。
-     */
+    /** 渲染全部指标口径 */
     public String renderMetrics() {
+        return renderMetrics(model.getMetrics().values().stream().map(MetricDef::getName).toList());
+    }
+
+    /**
+     * 渲染指定指标的口径。这是整个 prompt 里最值钱的部分——
+     * BIRD 的消融实验显示，去掉这类业务知识注入会掉 14 分。
+     * Schema Linking 之后只注入相关指标，省 token 且聚焦。
+     */
+    public String renderMetrics(Collection<String> metricNames) {
         StringBuilder sb = new StringBuilder();
         for (MetricDef m : model.getMetrics().values()) {
+            if (metricNames != null && !metricNames.isEmpty()
+                    && !metricNames.contains(m.getName())) {
+                continue;
+            }
             sb.append("- **").append(m.getDisplayName()).append("**（").append(m.getName()).append("）");
             if (!m.getSynonyms().isEmpty()) {
                 sb.append(" 别名：").append(String.join("、", m.getSynonyms()));
@@ -189,6 +200,27 @@ public class SemanticPromptBuilder {
         sb.append(')');
         if (p.getDescription() != null) {
             sb.append(' ').append(oneLine(p.getDescription()));
+        }
+        return sb.toString();
+    }
+
+    /**
+     * 渲染 golden 示例（few-shot）。模型写 SQL 时模仿的是示例的写法——
+     * join 哪张表、用哪个口径、枚举值怎么写，全部沉淀在示例里。
+     */
+    public String renderGoldenExamples(List<GoldenExample> examples) {
+        if (examples == null || examples.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("参考以下已确认正确的问题-SQL 示例（模仿其写法，包括 join 路径、口径过滤、枚举值）：\n\n");
+        for (GoldenExample ex : examples) {
+            sb.append("问题：").append(ex.getQuestion()).append('\n');
+            sb.append("```sql\n").append(ex.getSql()).append("\n```\n");
+            if (ex.getNotes() != null) {
+                sb.append("要点：").append(oneLine(ex.getNotes())).append('\n');
+            }
+            sb.append('\n');
         }
         return sb.toString();
     }

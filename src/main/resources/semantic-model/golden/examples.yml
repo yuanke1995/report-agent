@@ -1,0 +1,122 @@
+# ============================================================
+# Golden 示例：问题 → SQL 对
+#
+# 这是 NL2SQL 的 few-shot 语料。模型写 SQL 时模仿的是示例的"写法"，
+# 而不是凭空生成——示例里沉淀的是人工确认过的正确做法：
+# 该 join 哪张表、该用哪个口径、枚举值怎么写。
+#
+# 每条示例的三个字段缺一不可：
+#   question   —— 用户可能的问法（Schema Linking 召回用）
+#   sql        —— 人工验证过的正确 SQL
+#   notes      —— 为什么这么写（口径要点，注入 prompt 时一起给模型看）
+#
+# 维护纪律：新增示例必须先用 sql 脚本在库里跑一遍确认数字正确再提交。
+# ============================================================
+
+examples:
+
+  - id: region_gmv
+    question: 华南区上个月销售额是多少
+    keywords: [ 区域, 大区, 销售额, 华南 ]
+    tables: [ fact_order, dim_region ]
+    sql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+               INNER JOIN dim_region r ON r.region_id = o.region_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND r.region_name = '华南'
+        AND DATE_FORMAT(o.order_date, '%Y-%m') = '2026-07'
+    notes: 销售额口径=已支付订单实付合计；区域按订单收货地区（fact_order.region_id），不是客户注册地区。
+
+  - id: category_top
+    question: 食品生鲜类目销量最高的商品
+    keywords: [ 类目, 销量, 商品, 排行 ]
+    tables: [ fact_order_item, fact_order, dim_product ]
+    sql: |
+      SELECT p.product_name, SUM(i.quantity) AS 销量
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND p.category_l1 = '食品生鲜'
+      GROUP BY p.product_id, p.product_name
+      ORDER BY 销量 DESC
+      LIMIT 10
+    notes: 商品维度的销量用明细表 quantity 求和；必须连订单表过滤状态；商品过滤条件在 dim_product。
+
+  - id: customer_level_count
+    question: 各客户等级的人数分布
+    keywords: [ 客户等级, 人数, 分布, 会员 ]
+    tables: [ dim_customer ]
+    sql: |
+      SELECT customer_level, COUNT(*) AS 人数
+      FROM dim_customer
+      GROUP BY customer_level
+    notes: 直接统计 dim_customer 即可，不要 join 订单表（问题问的是客户存量分布，不是下单客户）。
+
+  - id: monthly_orders_trend
+    question: 今年每个月订单量变化趋势
+    keywords: [ 月度, 趋势, 订单量, 环比 ]
+    tables: [ fact_order ]
+    sql: |
+      SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS 月份, COUNT(DISTINCT o.order_id) AS 订单量
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND o.order_date >= '2026-01-01'
+      GROUP BY DATE_FORMAT(o.order_date, '%Y-%m')
+      ORDER BY 月份
+    notes: 订单量=已支付订单笔数，不含待支付/已取消；DATE_FORMAT 做月份分组，不需要 join 日期表。
+
+  - id: refund_rate_monthly
+    question: 最近三个月退款率走势
+    keywords: [ 退款率, 走势, 月度 ]
+    tables: [ fact_order ]
+    sql: |
+      SELECT DATE_FORMAT(o.order_date, '%Y-%m') AS 月份,
+             ROUND(SUM(o.refund_amount) / NULLIF(SUM(o.pay_amount), 0), 4) AS 退款率
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed', 'refunded')
+        AND o.order_date >= '2026-06-01'
+      GROUP BY DATE_FORMAT(o.order_date, '%Y-%m')
+      ORDER BY 月份
+    notes: 退款率分母是含退款的总流水（pay_amount 含 refunded 单），分子是退款金额。这是金额口径。
+
+  - id: high_value_customers
+    question: 金卡和铂金客户的消费总额
+    keywords: [ 金卡, 铂金, 高价值, 客户 ]
+    tables: [ fact_order, dim_customer ]
+    sql: |
+      SELECT ROUND(SUM(o.pay_amount), 2) AS 消费总额
+      FROM fact_order o
+               INNER JOIN dim_customer c ON c.customer_id = o.customer_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+        AND c.customer_level IN ('gold', 'platinum')
+    notes: 客户等级是英文枚举（gold/platinum），中文"金卡/铂金"必须映射；客户维度走 dim_customer。
+
+  - id: gross_profit_top
+    question: 毛利率最高的商品类目
+    keywords: [ 毛利, 毛利率, 类目 ]
+    tables: [ fact_order_item, fact_order, dim_product ]
+    sql: |
+      SELECT p.category_l1 AS 一级类目,
+             ROUND((SUM(i.item_pay_amount) - SUM(i.quantity * p.unit_cost))
+                       / NULLIF(SUM(i.item_pay_amount), 0), 4) AS 毛利率
+      FROM fact_order_item i
+               INNER JOIN fact_order o ON o.order_id = i.order_id
+               INNER JOIN dim_product p ON p.product_id = i.product_id
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+      GROUP BY p.category_l1
+      ORDER BY 毛利率 DESC
+    notes: 毛利=（明细实付 - 数量×成本）；成本在 dim_product.unit_cost；毛利率=毛利/明细实付。
+
+  - id: channel_compare
+    question: 各渠道的销售额对比
+    keywords: [ 渠道, 对比, 销售额 ]
+    tables: [ fact_order ]
+    sql: |
+      SELECT o.channel, ROUND(SUM(o.pay_amount), 2) AS 销售额
+      FROM fact_order o
+      WHERE o.order_status IN ('paid', 'shipped', 'completed')
+      GROUP BY o.channel
+      ORDER BY 销售额 DESC
+    notes: 渠道枚举：app=App / web=网页 / mini_program=小程序 / offline=线下门店。下单渠道在订单表，注册渠道在客户表，别混。

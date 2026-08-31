@@ -108,10 +108,24 @@ java -jar target/report-agent.jar
 mvn test   # 语义层解析、同义词解析、join 白名单、枚举映射的单元测试
 ```
 
+## NL2SQL 评测
+
+```bash
+# 完整评测：每题让模型生成 SQL，执行后与标准 SQL 的结果集对比（需要可用的模型 key）
+java -jar target/report-agent.jar --eval
+
+# 自检模式：不调模型，验证评测链路与对比逻辑（离线可跑，当前 20/20 通过）
+java -jar target/report-agent.jar --eval-self
+```
+
+评测集在 `eval/goldens.yml`（20 题，覆盖区域/客户/商品/时间/比率/渠道维度），
+标准 SQL 全部人工验证过。这是回归基线：改 prompt、改语义层、换模型之后，
+跑一遍就知道准确率是变好还是变坏。
+
 ## 实施进度
 
 - [x] **阶段 1 · 底座** —— 模拟业务库、语义层、双数据源、鉴权限流、配置中心、SSE 骨架
-- [ ] **阶段 2 · Tool Calling** —— Spring AI `@Tool` 工具集，模板路径打通
-- [ ] **阶段 3 · ReAct 循环** —— 多轮 observe→think→act、SqlGuard、错误自修正、轮次上限
-- [ ] **阶段 4 · NL2SQL 兜底** —— Schema Linking（混合检索 + 重排）、few-shot、结构化错误回灌
-- [ ] **阶段 5 · 前端与闭环** —— Vue 前端、ECharts、执行轨迹可视化、评测集、反馈闭环
+- [x] **阶段 2 · Tool Calling** —— Spring AI `@Tool` 工具集，模板路径打通（mock 端到端验证）
+- [x] **阶段 3 · ReAct 循环** —— 手写 observe→think→act 循环、SqlGuard AST 校验、错误自修正、轮次上限
+- [x] **阶段 4 · NL2SQL 兜底** —— Schema Linking（同义词 + 关键词召回，向量接口留位）、golden few-shot、20 题评测集
+- [ ] **阶段 5 · 前端与闭环** —— Vue 前端、ECharts、执行轨迹可视化、反馈闭环
