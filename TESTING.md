@@ -5,29 +5,54 @@
 
 前置条件（一次性准备）：
 - MySQL 已建好业务库和元数据库（`db/01_business_schema.sql`、`db/02_business_data.sql` 已执行）
-- Redis Stack 已启动：`redis-stack-server --port 6379`
-- `src/main/resources/application-local.yml` 已配置真实 API Key（参考同目录 `.example` 文件）
+- Redis 已启动。阶段 1~5 只用到限流与配置广播，**普通 Redis 即可**；这两处失败都是
+  降级放行，不影响本流程。只有向量召回才需要 Redis Stack（当前 Schema Linking 走关键词，未启用）
+- `src/main/resources/application-local.yml` 已配置真实 API Key，且 Redis 端口/密码与本机实际一致
+- `web/.env.local` 的 `VITE_AGENT_TOKEN` 与后端 `report-agent.trusted-token` 一致（不一致则接口全 401）
+- Maven >= 3.6.3（Spring Boot 3.5 的 maven-compiler-plugin 3.14 有此下限，3.6.0 会直接编译失败）
 - 重新打包（改过配置后必须）：`mvn -DskipTests package`
+  改动过 `src/main/resources` 下的文件时用 `mvn clean package`，否则 `target/classes`
+  里的旧文件会被打进新 jar
 
 ---
 
-## 1. 启动
+## 1. 启动（前后端分离）
 
 ```bash
+# 终端 1：后端
 java -jar target/report-agent.jar
+
+# 终端 2：前端
+cd web && npm run dev
 ```
 
-预期：
+后端预期：
 - 日志出现 `语义层加载完成：6 张表 / 13 个指标 / 7 条 join 路径 / 3 个报表模板 / 8 条 golden 示例`
 - 日志出现 `[语义层] 校验通过，与数据库 report_demo 对齐（0 项告警）`
 - 日志出现 `Started ReportAgentApplication`
 - 无 `[FAIL-LOUD] 当前使用的是占位 API Key` 告警（有的话说明 key 没配进去）
+- **无** `Adding welcome page: class path resource [static/index.html]`
+  —— 出现说明旧静态资源还在 jar 里，需要 `mvn clean package`
+
+前端预期：vite 输出 `Local: http://localhost:5173/`
+
+自检两条命令：
+
+```bash
+# 后端根路径应 404：前后端分离后后端不再托管页面，这是预期行为
+curl -s -o /dev/null -w "%{http_code}\n" http://127.0.0.1:8091/report-agent/
+
+# 经前端代理访问后端接口应 200，证明代理链路通
+curl -s -o /dev/null -w "%{http_code}\n" \
+  -H "X-Trusted-Token: local-dev-token-change-me" \
+  http://localhost:5173/report-agent/api/semantic/overview
+```
 
 ---
 
 ## 2. 模板路径（准确率最高的主链路）
 
-浏览器打开 `http://127.0.0.1:8091/report-agent/`，点击推荐问题
+浏览器打开 `http://localhost:5173`（**不是 8091**），点击推荐问题
 **「最近半年每个月的销售额」**。
 
 预期：
@@ -153,4 +178,8 @@ Schema Linking / 参数校验 / 工具注册）。
 | `[FAIL-LOUD] 当前使用的是占位 API Key` | key 没生效，检查 application-local.yml 与打包 |
 | 请求 90 秒后报 `EOF reached while reading` | 思考模式没关（网关超时），确认代码里 `enable_thinking: false` 生效 |
 | `[语义层] 校验...` 报错拒绝启动 | 语义层 YAML 与库结构不一致，按报错清单修 YAML 或库 |
-| 前端表格/图表不显示 | 确认访问的是打包后的页面（`/report-agent/`），不是旧缓存 |
+| 所有接口 401 `无权访问 AI 服务` | `web/.env.local` 的 `VITE_AGENT_TOKEN` 与后端 `trusted-token` 不一致；改完要重启 vite |
+| 页面能开但接口 404 | vite 代理必须只匹配 `/report-agent/api`。代理整个 `/report-agent` 会把前端自己的资源也转发给后端 |
+| 打包报 `requires Maven version 3.6.3` | 本机 Maven 太旧，换 3.6.3+（IDEA 自带的 `plugins/maven/lib/maven3` 通常是 3.9.x） |
+| 后端 8091 根路径 404 | 前后端分离后的预期行为，页面请从 `http://localhost:5173` 访问 |
+| curl 发中文问题报 500 `Invalid UTF-8` | Git Bash 把中文按 GBK 发出去了，不是服务缺陷。把 JSON 存成 UTF-8 文件再 `--data-binary @file` |

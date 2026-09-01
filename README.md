@@ -74,16 +74,31 @@ export AI_API_KEY=sk-xxx
 
 没有真实 key 时服务仍能启动（用占位值），但启动日志会打 `[FAIL-LOUD]` 告警，且任何模型调用都会返回 401。
 
-### 4. 运行
+### 4. 运行（前后端分离）
+
+后端与前端各自独立启动，前端产物不再打进 jar。
 
 ```bash
+# 终端 1：后端（需 Maven >= 3.6.3，Spring Boot 3.5 的编译插件有此下限）
 mvn -DskipTests package
 java -jar target/report-agent.jar
+
+# 终端 2：前端
+cd web
+cp .env.local.example .env.local   # 首次：确认 token 与后端一致
+npm install
+npm run dev
 ```
 
-- 服务地址：http://127.0.0.1:8091/report-agent
+- 页面入口：http://localhost:5173 —— **从这里访问**，不是 8091
+- 后端接口：http://127.0.0.1:8091/report-agent
 - Swagger：http://127.0.0.1:8091/report-agent/swagger-ui.html
-- 所有 `/api/**` 接口需要请求头 `X-Trusted-Token`（本地默认 `local-dev-token`）
+- 所有 `/api/**` 接口需要请求头 `X-Trusted-Token`，值必须与后端 `report-agent.trusted-token`
+  一致（`.example` 里是 `local-dev-token-change-me`）。前端从 `web/.env.local`
+  的 `VITE_AGENT_TOKEN` 读取，两边不一致会让所有接口返回 401。
+
+后端已不再托管前端静态资源，直接访问 `http://127.0.0.1:8091/report-agent/` 会返回 404，这是预期行为。
+浏览器只跟 5173 打交道，跨域由 vite 代理消化，因此后端无需开 CORS。
 
 ## 安全设计
 
@@ -110,14 +125,20 @@ mvn test   # 语义层解析、同义词解析、join 白名单、枚举映射�
 
 ## 前端
 
+前后端分离部署：前端是独立的 vite 应用，产物不进后端 jar。
+
 ```bash
 cd web
 npm install
-npm run dev        # 开发模式（代理 /report-agent 到 127.0.0.1:8091）
-npm run build      # 产物打进后端 jar 的 static/ 目录
+npm run dev        # 开发服务器 :5173，仅把 /report-agent/api 代理到 127.0.0.1:8091
+npm run build      # 产物在 web/dist/，交给 nginx 等静态服务器托管
 ```
 
-浏览器打开 `http://127.0.0.1:8091/report-agent/`（后端直接提供前端静态资源）。
+浏览器打开 `http://localhost:5173`。
+
+代理只匹配 `/report-agent/api` 而不是 `/report-agent`：后端 context-path 恰好也叫
+`/report-agent`，若代理整个前缀，前端自己的模块与资源请求会一并被转发到后端而 404。
+
 页面包含：SSE 流式问答、Agent 执行轨迹（每步进行中/成功/失败）、结果表格、
 ECharts 图表（时间列自动折线图）、SQL 折叠面板、👍/👎 反馈（差评回流评估集）。
 
