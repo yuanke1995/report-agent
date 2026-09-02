@@ -1,5 +1,5 @@
 <template>
-  <div ref="scroller" class="message-list">
+  <div ref="scroller" class="message-list" @scroll="onScroll">
     <WelcomePanel v-if="!messages.length" @pick="q => emit('pick', q)" />
 
     <template v-for="(m, i) in messages" :key="i">
@@ -7,21 +7,21 @@
       <AssistantMessage
         v-else
         :message="m"
-        @feedback="(msg, rating) => emit('feedback', msg, rating)"
+        @feedback="(msg, rating, reason) => emit('feedback', msg, rating, reason)"
       />
     </template>
 
-    <div v-if="thinking" class="message assistant">
-      <div class="bubble thinking">
-        <a-spin size="small" />
-        <span>正在分析…</span>
-      </div>
+    <!-- 思考气泡直接挂在最后一条助手消息里：流式 token 还在写的时候弹
+         一条新的"正在分析…"占位，看着像回答分了两截 -->
+    <div v-if="lastAssistant?.pending" class="thinking">
+      <a-spin size="small" />
+      <span>{{ lastAssistant.stage || '正在分析…' }}</span>
     </div>
   </div>
 </template>
 
 <script setup>
-import { nextTick, ref, watch } from 'vue'
+import { computed, nextTick, ref, watch } from 'vue'
 import UserMessage from './UserMessage.vue'
 import AssistantMessage from './AssistantMessage.vue'
 import WelcomePanel from './WelcomePanel.vue'
@@ -33,14 +33,31 @@ const props = defineProps({
 
 const emit = defineEmits(['pick', 'feedback'])
 
+/** 最后一条助手消息，思考气泡挂在这里。 */
+const lastAssistant = computed(() => {
+  for (let i = props.messages.length - 1; i >= 0; i--) {
+    if (props.messages[i].role === 'assistant') return props.messages[i]
+  }
+  return null
+})
+
 // 滚动跟随由列表自己负责：谁拥有滚动容器谁管滚动，
 // 会话逻辑（useChat）因此不需要知道 DOM 的存在。
 const scroller = ref(null)
+let stickToBottom = true
+
+// 用户主动往上翻历史时不要再把他拽回底部
+function onScroll() {
+  const el = scroller.value
+  if (!el) return
+  stickToBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 80
+}
 
 watch(
   // 流式回答是在消息对象内部增量改字段的，deep 才能跟住
   () => [props.messages, props.thinking],
   () => {
+    if (!stickToBottom) return
     nextTick(() => {
       if (scroller.value) scroller.value.scrollTop = scroller.value.scrollHeight
     })

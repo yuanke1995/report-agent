@@ -15,6 +15,21 @@ function authHeaders(extra = {}) {
   }
 }
 
+/** 非 2xx 时把后端 ResultJson.msg 取出来，不然用户只看到一个 HTTP 状态码。 */
+async function errorMessage(resp) {
+  const fallback = {
+    401: '鉴权失败，请检查访问 token',
+    429: '请求过于频繁，请稍后重试'
+  }[resp.status]
+  try {
+    const body = await resp.json()
+    if (body?.msg) return body.msg
+  } catch {
+    // 响应体不是 JSON，走兜底文案
+  }
+  return fallback || `服务异常（HTTP ${resp.status}）`
+}
+
 /** 普通 JSON 请求，返回后端 ResultJson 的解析结果。 */
 export async function postJson(path, body) {
   const resp = await fetch(API_BASE + path, {
@@ -22,6 +37,7 @@ export async function postJson(path, body) {
     headers: authHeaders(body ? { 'Content-Type': 'application/json' } : {}),
     body: body ? JSON.stringify(body) : undefined
   })
+  if (!resp.ok) throw new Error(await errorMessage(resp))
   return resp.json()
 }
 
@@ -38,7 +54,7 @@ export async function postStream(path, body) {
     body: JSON.stringify(body)
   })
   if (!resp.ok || !resp.body) {
-    throw new Error('HTTP ' + resp.status)
+    throw new Error(await errorMessage(resp))
   }
   return resp
 }

@@ -26,8 +26,11 @@ export function inferChartSpec(data) {
   const firstIsTime = TIME_COLUMN_PATTERN.test(xField)
     || /^\d{4}-\d{2}/.test(String(rows[0][xField]))
 
-  // 只取前两个数值列：再多图例就挤了，而且量纲通常也不一致
-  const yFields = columns.filter(c => typeof rows[0][c] === 'number').slice(0, 2)
+  // 数值列要跳过 X 轴那一列——"年份""月份"这类数字维度被画成一条曲线没有任何意义
+  const yFields = columns
+    .slice(1)
+    .filter(c => isNumericColumn(rows, c))
+    .slice(0, 2)
   if (!yFields.length) return null
 
   return {
@@ -38,27 +41,56 @@ export function inferChartSpec(data) {
   }
 }
 
+/** 该列是否数值列：判断不能只看第一行，首行恰好为 null/空时整列会被误判。 */
+function isNumericColumn(rows, col) {
+  for (const row of rows) {
+    const v = row[col]
+    if (v === null || v === undefined || v === '') continue
+    return typeof v === 'number' || (typeof v === 'string' && Number.isFinite(Number(v)))
+  }
+  return false
+}
+
+function toNumber(v) {
+  if (v === null || v === undefined || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
+/** 两列量纲差 10 倍以上时，第二条系列共享 Y 轴会被压成 0 像素、图上完全看不见。 */
+function needsSecondAxis(rows, cols) {
+  if (cols.length < 2) return false
+  const max = c => Math.max(...rows.map(r => Math.abs(toNumber(r[c]) ?? 0)))
+  const [a, b] = [max(cols[0]), max(cols[1])]
+  if (!a || !b) return false
+  return Math.max(a, b) / Math.min(a, b) > 10
+}
+
 /**
  * 把图表规格转成 ECharts option。
  *
  * @param {{type: string, xField: string, yFields: string[], rows: object[]}} spec
  */
 export function buildChartOption(spec) {
+  const dualAxis = needsSecondAxis(spec.rows, spec.yFields)
   return {
     tooltip: { trigger: 'axis' },
     legend: { data: spec.yFields },
-    grid: { left: 60, right: 20, top: 40, bottom: 40 },
+    grid: { left: 70, right: dualAxis ? 70 : 20, top: 40, bottom: 40 },
     xAxis: {
       type: 'category',
       data: spec.rows.map(r => String(r[spec.xField])),
       axisLabel: { rotate: 30 }
     },
-    yAxis: { type: 'value' },
-    series: spec.yFields.map(field => ({
+    yAxis: dualAxis
+      ? [{ type: 'value', name: spec.yFields[0] }, { type: 'value', name: spec.yFields[1] }]
+      : { type: 'value' },
+    series: spec.yFields.map((field, i) => ({
       name: field,
       type: spec.type,
       smooth: spec.type === 'line',
-      data: spec.rows.map(r => r[field])
+      yAxisIndex: dualAxis ? i : 0,
+      data: spec.rows.map(r => toNumber(r[field]))
     }))
   }
 }

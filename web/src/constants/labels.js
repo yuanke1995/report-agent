@@ -37,3 +37,12 @@ export function actionLabel(action) {
 export function statusLabel(status) {
   return STATUS_LABELS[status] || status
 }
+
+/** 输入框最大长度，与后端 ChatRequest @Size(max=500) 对齐，超长提前截断而非提交后报错 */
+export const QUESTION_MAX = 500
+
+/** 结果表每页行数：结果可能上千行，全量渲染会卡死页面 */
+export const TABLE_PAGE_SIZE = 20
+
+/** 差评原因白名单，与后端 FeedbackController.REASONS 保持一致 */
+export const FEEDBACK_REASONS = ['数字不对', '口径不对', '答非所问', '查询失败']

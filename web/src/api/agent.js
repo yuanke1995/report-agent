@@ -29,6 +29,10 @@ export async function chat(payload, onEvent) {
 /**
  * 提交回答反馈。
  *
+ * 差评原因不再在这里兜底写死——后端对差评要求从白名单（数字不对/口径不对/
+ * 答非所问/查询失败）里选一个，界面负责让用户挑，这里缺了就让后端报错，
+ * 而不是替用户瞎填一个。
+ *
  * @param {string} messageId
  * @param {1|-1} rating 1=有用 -1=没用
  * @param {string} [reason] 差评原因，后端要求差评必填
@@ -36,7 +40,8 @@ export async function chat(payload, onEvent) {
 export async function submitFeedback(messageId, rating, reason) {
   const body = { messageId, rating }
   if (rating === -1) {
-    body.reason = reason || '数字不对'
+    if (!reason) throw new Error('差评需要选择原因')
+    body.reason = reason
   }
   return postJson('/agent/feedback', body)
 }
